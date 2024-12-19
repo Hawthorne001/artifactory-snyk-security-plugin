@@ -3,94 +3,138 @@
 For information about the Artifactory Gatekeeper plugin, see the Snyk user
 docs, [Artifactory Gatekeeper plugin](https://docs.snyk.io/integrations/private-registry-gatekeeper-plugins/artifactory-gatekeeper-plugin-overview).
 
-## Setup local development environment
+## Local development
 
-### Download an Artifactory Docker image:
+## Running artifactory locally
+You can run artifactory pro with docker compose. There are a few steps needed to set it up:
 
-```
-docker pull releases-docker.jfrog.io/jfrog/artifactory-pro:latest
-```
+### Step 1: Initialise the file system
+Start up the containers:
 
-Does not have to be `pro`, but in this example we'll do it.
-
-### Create a `$JFROG_HOME` folder
-
-```
-mkdir -p ~/.jfrog/artifactory/var/
+```shell
+docker compose up
 ```
 
-Export it to your environment for ease of use
+That will initialise the system files at `distribution/docker`.
 
-```
-echo export JFROG_HOME=~/.jfrog >> ~/.zshrc
-```
+### Step 2: Point Artifactory to the DB
+Ctrl+C out of the containers and edit the DB configuration in
+`distribution/docker/etc/system.yaml`:
 
-### Build the plugin
-
-Depends a lot on your system. But something like
-
-```
-mvn install -DskipTests
-```
-
-Will probably work. Per default, you'll find a baked `.zip`
-in `~/.m2/repository/io/snyk/plugins/artifactory/distribution/LOCAL-SNAPSHOT`.
-
-Unzip it. Inside is a `.groovy` file, a `.properties` file, as well as the actual `.jar` inside `/lib`.
-
-Edit the `.properties`, add something like this to the properties for a minimum working solution:
-
-```
-snyk.api.token=<INSERT_TOKEN>
-snyk.api.organization=<INSERT_ORG_ID>
+```yaml
+    database:
+        type: postgresql
+        driver: org.postgresql.Driver
+        url: "jdbc:postgresql://postgres/artifactory"
+        username: artifactory
+        password: password
 ```
 
-Also, if you want to test against your local Registry, but you're running on Docker:
+Run `docker compose up` again. The application should start at [localhost:8082](http://localhost:8082),
+you can log in with username `admin` and password `password`.
 
-```
-snyk.api.url=http://host.docker.internal:8000/api/v1/
-```
+### Step 3: Enable the license
+Artifactory pro license is required to run the plugin. You can get a trial one
+for free by signing up at [JFrog website](https://jfrog.com/start-free/).
+Paste the license in you artifactory.
 
-At least if you're on OSX, you cannot probe against `localhost` from within a Docker container.
+There! You have an artifactory pro running locally. Time to install the Snyk plugin.
 
-Also, remember to activate some of the scanners depending on what you're debugging:
+## Installing the plugin
+Build the plugin first with `mvn install -DskipTests`.
+Then unpack the release into artifactory's plugins folder:
 
-```
-snyk.scanner.packageType.maven=true
-snyk.scanner.packageType.npm=true
-snyk.scanner.packageType.pypi=true
-```
-
-### Enable debugging JVM options
-
-```
-vim $JFROG_HOME/artifactory/var/etc/system.yaml
-``` 
-
-Add `extraJavaOpts`
-
-```
-shared:
-    ## Java 17 distribution to use
-    #javaHome: "JFROG_HOME/artifactory/app/third-party/java"
-
-    ## Extra Java options to pass to the JVM. These values add to or override the defaults.
-    #extraJavaOpts: "-Xms512m -Xmx4g"
-    extraJavaOpts: "-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5005"
+```shell
+unzip -o distribution/target/artifactory-snyk-security-plugin-LOCAL-SNAPSHOT.zip -d distribution/docker/etc/artifactory/
 ```
 
-### Run the Docker image
+Set your Snyk org ID and API token inside `distribution/docker/etc/artifactory/plugins/snykSecurityPlugin.properties`
+and restart Artifactory. Check [the logs](http://localhost:8082/ui/admin/artifactory/advanced/system_logs)
+to confirm the plugin gets loaded.
 
-And ensure you expose debugging ports, in this case, `5005`
+After making changes to the plugin, repeat `mvn install` and extract the jar file but without touching your config:
 
+```shell
+unzip -p distribution/target/artifactory-snyk-security-plugin-LOCAL-SNAPSHOT.zip plugins/lib/artifactory-snyk-security-core.jar > distribution/docker/etc/artifactory/plugins/lib/artifactory-snyk-security-core.jar
+unzip -p distribution/target/artifactory-snyk-security-plugin-LOCAL-SNAPSHOT.zip plugins/snykSecurityPlugin.groovy > distribution/docker/etc/artifactory/plugins/snykSecurityPlugin.groovy
 ```
-docker run -d --name artifactory -p 8888:8082 -p 8081:8081 -p 5005:5005 -v $JFROG_HOME/artifactory/var/:/var/opt/jfrog/artifactory releases-docker.jfrog.io/jfrog/artifactory-pro:latest
+
+## Inspecting plugin logs
+In order to see the logs, set the log level for Snyk by inserting this line: `<logger name="io.snyk" level="debug"/>`
+into this file: `distribution/docker/etc/artifactory/logback.xml`.
+
+## Testing supported ecosystems
+Here are some tips for pointing local dev tools to Artifactory in order to try out the plugin.
+
+### NPM
+1. In the Artifactory UI, create a remote NPM repository using Repository Key `npm`.
+2. Authenticate your NPM client: `npm login --registry=http://localhost:8081/artifactory/api/npm/npm/ --auth-type=web`.
+3. Install a package `npm add jest-get-type@30.0.0-alpha.5 --registry=http://localhost:8081/artifactory/api/npm/npm/ --cache /tmp/npm-cache && rm -rf /tmp/npm-cache`
+
+### Maven
+This actually uses a Gradle project to test:
+1. In the Artifactory UI, create a remote Maven repository using Repository Key `maven`.
+2. Drop repository coords in `settings.gradle.kts` of your Gradle project (see the snippet below).
+```kotlin
+pluginManagement {
+	repositories {
+		maven {
+			url = uri("http://localhost:8082/artifactory/maven/")
+			isAllowInsecureProtocol = true
+			credentials {
+				username = "admin"
+				password = "password"
+			}
+		}
+		gradlePluginPortal()
+	}
+}
 ```
+3. Make sure the `repositories` block only includes your Artifactory in `build.gradle.kts` (see the second snippet below).
+```kotlin
+repositories {
+	maven {
+		url = uri("http://localhost:8082/artifactory/maven/")
+		isAllowInsecureProtocol = true
+		credentials {
+			username = "admin"
+			password = "password"
+		}
+	}
+}
+```
+4. Install your project's dependencies.
 
-Wait until the Docker has loaded, it can take a while. Check the progress with `docker logs -f <id>`.
 
-#### Notice for M1 Macs
+### PyPi
+1. In the Artifactory UI, create a remote Pypi repository using Repository Key `pypi`.
+2. `pip3 install --index-url http://localhost:8082/artifactory/api/pypi/pypi/simple libdev`
 
-You'll have a ton of trouble if you default to building your Docker images as `linux/amd64`. At least I had. Ensure you
-do not have a env variable like `DOCKER_DEFAULT_PLATFORM=linux/amd64` enabled when pulling and/or running the image.
+### Ruby Gems
+1. In the Artifactory UI, create a remote Gems repository using Repository Key `rubygems`.
+2. Still in the Artifactory UI, navigate to the artifacts view and hit the `Set me up` option.
+3. Choose the `rubygems` repository and generate an access token.
+4. `gem source -a http://admin:ACCESS_TOKEN_FROM_PREVIOUS_STEP@localhost:8081/artifactory/api/gems/rubygems/`
+5. `gem install openssl`
 
+### Cocoapods
+1. In the Artifactory UI, create a remote CocoaPods repository using Repository Key `cocoapods`.
+2. Create a `Podfile`:
+```
+source "http://localhost:8081/artifactory/api/pods/cocoapods"
+project 'project/test/test.xcodeproj'
+platform :ios, '10.0'
+target 'test' do
+  use_frameworks!
+  pod 'Alamofire', '~> 5.10'
+  pod 'Bolts', '~> 1.9'
+end
+```
+3. `pod install`
+
+### Nuget
+1. In the Artifactory UI, create a remote Nuget repository using Repository Key `nuget`.
+2. `nuget sources Add -Name Artifactory -Source http://localhost:8081/artifactory/api/nuget/nuget`
+3. Disable the default source: `nuget sources disable -Name nuget.org`.
+4. Verify only Artifactory is enabled: `nuget sources List`.
+5. `nuget install Newtonsoft.Json -Version 13.0.1`

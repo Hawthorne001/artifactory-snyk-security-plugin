@@ -3,8 +3,8 @@ package io.snyk.plugins.artifactory.scanner;
 import io.snyk.plugins.artifactory.configuration.ConfigurationModule;
 import io.snyk.plugins.artifactory.exception.CannotScanException;
 import io.snyk.plugins.artifactory.exception.SnykAPIFailureException;
-import io.snyk.sdk.api.v1.SnykClient;
-import io.snyk.sdk.api.v1.SnykResult;
+import io.snyk.sdk.api.SnykClient;
+import io.snyk.sdk.api.SnykResult;
 import io.snyk.sdk.model.TestResult;
 import org.artifactory.fs.FileLayoutInfo;
 import org.artifactory.repo.RepoPath;
@@ -56,20 +56,24 @@ class PythonScanner implements PackageScanner {
   }
 
   public static String getModuleDetailsURL(ModuleURLDetails details) {
-    return "https://snyk.io/vuln/" + URLEncoder.encode("pip:" + details.name + "@" + details.version, UTF_8);
+    return SnykDetailsUrl.create("pip", details.name, details.version).toString();
   }
 
-  public TestResult scan(FileLayoutInfo fileLayoutInfo, RepoPath repoPath) {
+  public io.snyk.plugins.artifactory.model.TestResult scan(FileLayoutInfo fileLayoutInfo, RepoPath repoPath) {
     ModuleURLDetails details = getModuleDetailsFromFileLayoutInfo(fileLayoutInfo)
       .orElseGet(() -> getModuleDetailsFromUrl(repoPath.toString())
         .orElseThrow(() -> new CannotScanException("Module details not provided.")));
 
     SnykResult<TestResult> result;
     try {
-      result = snykClient.testPip(
-        details.name,
-        details.version,
-        Optional.ofNullable(configurationModule.getProperty(API_ORGANIZATION))
+      LOG.debug("Running Snyk test: {}", repoPath);
+      result = snykClient.get(TestResult.class, request ->
+        request
+          .withPath(String.format("v1/test/pip/%s/%s",
+            URLEncoder.encode(details.name, UTF_8),
+            URLEncoder.encode(details.version, UTF_8))
+          )
+          .withQueryParam("org", configurationModule.getProperty(API_ORGANIZATION))
       );
     } catch (Exception e) {
       throw new SnykAPIFailureException(e);
@@ -77,7 +81,7 @@ class PythonScanner implements PackageScanner {
 
     TestResult testResult = result.get().orElseThrow(() -> new SnykAPIFailureException(result));
     testResult.packageDetailsURL = getModuleDetailsURL(details);
-    return testResult;
+    return TestResultConverter.convert(testResult);
   }
 
   public static class ModuleURLDetails {

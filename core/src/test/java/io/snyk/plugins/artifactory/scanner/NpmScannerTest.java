@@ -1,10 +1,10 @@
 package io.snyk.plugins.artifactory.scanner;
 
 import io.snyk.plugins.artifactory.configuration.ConfigurationModule;
+import io.snyk.plugins.artifactory.model.TestResult;
 import io.snyk.plugins.artifactory.util.SnykConfigForTests;
 import io.snyk.sdk.SnykConfig;
-import io.snyk.sdk.api.v1.SnykClient;
-import io.snyk.sdk.model.TestResult;
+import io.snyk.sdk.api.SnykClient;
 import org.artifactory.fs.FileLayoutInfo;
 import org.artifactory.repo.RepoPath;
 import org.junit.jupiter.api.Assertions;
@@ -37,12 +37,8 @@ public class NpmScannerTest {
     FileLayoutInfo fileLayoutInfo = mock(FileLayoutInfo.class);
 
     TestResult result = scanner.scan(fileLayoutInfo, repoPath);
-    assertFalse(result.success);
-    assertEquals(1, result.dependencyCount);
-    assertTrue(result.issues.vulnerabilities.size() > 0);
-    assertEquals("npm", result.packageManager);
-    assertEquals(org, result.organisation.id);
-    assertEquals("https://snyk.io/test/npm/lodash/4.17.15", result.packageDetailsURL);
+    assertTrue(result.getVulnSummary().getTotalCount() > 0);
+    assertEquals("https://security.snyk.io/package/npm/lodash/4.17.15", result.getDetailsUrl().toString());
   }
 
   @Test
@@ -82,6 +78,6 @@ public class NpmScannerTest {
   void getPackageDetailsURL_shouldUseTestPage() {
     var details = new NpmScanner.PackageURLDetails("@babel/core", "7.0.0-rc.4");
     var result = NpmScanner.getPackageDetailsURL(details);
-    assertEquals("https://snyk.io/test/npm/@babel/core/7.0.0-rc.4", result);
+    assertEquals("https://security.snyk.io/package/npm/%40babel%2Fcore/7.0.0-rc.4", result);
   }
 }

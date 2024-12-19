@@ -1,15 +1,17 @@
 package io.snyk.plugins.artifactory;
 
 import io.snyk.plugins.artifactory.audit.AuditModule;
-import io.snyk.plugins.artifactory.configuration.ArtifactProperty;
+import io.snyk.plugins.artifactory.configuration.BaseUrlSanitiser;
+import io.snyk.plugins.artifactory.configuration.UserAgent;
+import io.snyk.plugins.artifactory.configuration.properties.ArtifactProperty;
 import io.snyk.plugins.artifactory.configuration.ConfigurationModule;
 import io.snyk.plugins.artifactory.exception.CannotScanException;
 import io.snyk.plugins.artifactory.exception.SnykAPIFailureException;
 import io.snyk.plugins.artifactory.exception.SnykRuntimeException;
-import io.snyk.plugins.artifactory.scanner.ScannerModule;
+import io.snyk.plugins.artifactory.scanner.*;
 import io.snyk.sdk.SnykConfig;
-import io.snyk.sdk.api.v1.SnykClient;
-import io.snyk.sdk.api.v1.SnykResult;
+import io.snyk.sdk.api.SnykClient;
+import io.snyk.sdk.api.SnykResult;
 import io.snyk.sdk.model.NotificationSettings;
 import org.artifactory.exception.CancelException;
 import org.artifactory.fs.ItemInfo;
@@ -33,7 +35,6 @@ import static java.lang.String.format;
 public class SnykPlugin {
 
   private static final Logger LOG = LoggerFactory.getLogger(SnykPlugin.class);
-  private static final String API_USER_AGENT = "snyk-artifactory-plugin/";
 
   private ConfigurationModule configurationModule;
   private AuditModule auditModule;
@@ -63,7 +64,8 @@ public class SnykPlugin {
       final SnykClient snykClient = createSnykClient(configurationModule, pluginVersion);
 
       auditModule = new AuditModule();
-      scannerModule = new ScannerModule(configurationModule, repositories, snykClient);
+      ScannerResolver scannerResolver = ScannerResolver.setup(configurationModule, snykClient);
+      scannerModule = new ScannerModule(configurationModule, repositories, scannerResolver);
 
       LOG.info("Plugin version: {}", pluginVersion);
     } catch (Exception ex) {
@@ -88,23 +90,42 @@ public class SnykPlugin {
   }
 
   /**
-   * Scans an artifact for issues (vulnerability or license).
+   * Invoked once when an artifact is first fetched from an external repository.
+   * Runs Snyk test and persists the result in properties.
+   * <p>
+   * Extension point: {@code storage.afterCreate}.
+   */
+  public void handleAfterCreate(RepoPath repoPath) {
+    LOG.debug("Handle 'afterCreate' event for: {}", repoPath);
+
+    try {
+      scannerModule.testArtifact(repoPath);
+    } catch (CannotScanException e) {
+      LOG.debug("Artifact cannot be scanned. {} {}", e.getMessage(), repoPath);
+    } catch(SnykAPIFailureException e) {
+      String causeMessage = getCauseMessage(e);
+      String message = format("Snyk test failed. %s %s", causeMessage, repoPath);
+      LOG.error(message);
+    }
+  }
+
+  /**
+   * Filters access based on Snyk properties stored on the artifact.
+   * When in continuous mode, may run an extra Snyk test to refresh the results.
    * <p>
    * Extension point: {@code download.beforeDownload}.
    */
   public void handleBeforeDownloadEvent(RepoPath repoPath) {
     LOG.debug("Handle 'beforeDownload' event for: {}", repoPath);
+
     try {
-      scannerModule.scanArtifact(repoPath);
+      scannerModule.filterAccess(repoPath);
     } catch (CannotScanException e) {
       LOG.debug("Artifact cannot be scanned. {} {}", e.getMessage(), repoPath);
     } catch (SnykAPIFailureException e) {
       final String blockOnApiFailurePropertyKey = SCANNER_BLOCK_ON_API_FAILURE.propertyKey();
       final String blockOnApiFailure = configurationModule.getPropertyOrDefault(SCANNER_BLOCK_ON_API_FAILURE);
-      final String causeMessage = Optional.ofNullable(e.getCause())
-        .map(Throwable::getMessage)
-        .map(m -> e.getMessage() + " " + m)
-        .orElseGet(e::getMessage);
+      final String causeMessage = getCauseMessage(e);
 
       String message = format("Artifact scan failed due to an API error on Snyk's side. %s %s", causeMessage, repoPath);
       LOG.debug(message);
@@ -113,6 +134,13 @@ public class SnykPlugin {
         throw new CancelException(message, 500);
       }
     }
+  }
+
+  private String getCauseMessage(Throwable e) {
+    return Optional.ofNullable(e.getCause())
+      .map(Throwable::getMessage)
+      .map(m -> e.getMessage() + " " + m)
+      .orElseGet(e::getMessage);
   }
 
   private void validateConfiguration() {
@@ -131,6 +159,10 @@ public class SnykPlugin {
       .forEach(LOG::debug);
   }
 
+  private boolean shouldTestContinuously() {
+    return configurationModule.getPropertyOrDefault(TEST_CONTINUOUSLY).equals("true");
+  }
+
   private SnykClient createSnykClient(@Nonnull ConfigurationModule configurationModule, String pluginVersion) throws Exception {
     final String token = configurationModule.getPropertyOrDefault(API_TOKEN);
     String baseUrl = configurationModule.getPropertyOrDefault(API_URL);
@@ -140,12 +172,7 @@ public class SnykPlugin {
       trustAllCertificates = true;
     }
 
-    if (!baseUrl.endsWith("/")) {
-      if (LOG.isWarnEnabled()) {
-        LOG.warn("'{}' must end in /, your value is '{}'", API_URL.propertyKey(), baseUrl);
-      }
-      baseUrl = baseUrl + "/";
-    }
+    baseUrl = new BaseUrlSanitiser().sanitise(baseUrl);
 
     String sslCertificatePath = configurationModule.getPropertyOrDefault(API_SSL_CERTIFICATE_PATH);
     String httpProxyHost = configurationModule.getPropertyOrDefault(HTTP_PROXY_HOST);
@@ -155,7 +182,7 @@ public class SnykPlugin {
     var config = SnykConfig.newBuilder()
       .setBaseUrl(baseUrl)
       .setToken(token)
-      .setUserAgent(API_USER_AGENT + pluginVersion)
+      .setUserAgent(UserAgent.getUserAgent(pluginVersion))
       .setTrustAllCertificates(trustAllCertificates)
       .setSslCertificatePath(sslCertificatePath)
       .setHttpProxyHost(httpProxyHost)

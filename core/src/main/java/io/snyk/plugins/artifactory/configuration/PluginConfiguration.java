@@ -2,7 +2,7 @@ package io.snyk.plugins.artifactory.configuration;
 
 public enum PluginConfiguration implements Configuration {
   // general settings
-  API_URL("snyk.api.url", "https://snyk.io/api/v1/"),
+  API_URL("snyk.api.url", "https://api.snyk.io/"),
   API_TOKEN("snyk.api.token", ""),
   API_ORGANIZATION("snyk.api.organization", ""),
   API_SSL_CERTIFICATE_PATH("snyk.api.sslCertificatePath", ""),
@@ -18,7 +18,13 @@ public enum PluginConfiguration implements Configuration {
   SCANNER_LICENSE_THRESHOLD("snyk.scanner.license.threshold", "low"),
   SCANNER_PACKAGE_TYPE_MAVEN("snyk.scanner.packageType.maven", "true"),
   SCANNER_PACKAGE_TYPE_NPM("snyk.scanner.packageType.npm", "true"),
-  SCANNER_PACKAGE_TYPE_PYPI("snyk.scanner.packageType.pypi", "false");
+  SCANNER_PACKAGE_TYPE_PYPI("snyk.scanner.packageType.pypi", "false"),
+  SCANNER_PACKAGE_TYPE_RUBYGEMS("snyk.scanner.packageType.gems", "false"),
+  SCANNER_PACKAGE_TYPE_NUGET("snyk.scanner.packageType.nuget", "false"),
+  SCANNER_PACKAGE_TYPE_COCOAPODS("snyk.scanner.packageType.cocoapods", "false"),
+  TEST_CONTINUOUSLY("snyk.scanner.test.continuously","false"),
+  TEST_FREQUENCY_HOURS("snyk.scanner.frequency.hours", "168"),
+  EXTEND_TEST_DEADLINE_HOURS("snyk.scanner.extendTestDeadline.hours", "24");
 
   private final String propertyKey;
   private final String defaultValue;

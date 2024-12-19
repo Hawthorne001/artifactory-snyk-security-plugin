@@ -2,10 +2,10 @@ package io.snyk.plugins.artifactory.scanner;
 
 import io.snyk.plugins.artifactory.configuration.ConfigurationModule;
 import io.snyk.plugins.artifactory.exception.CannotScanException;
+import io.snyk.plugins.artifactory.model.TestResult;
 import io.snyk.plugins.artifactory.util.SnykConfigForTests;
 import io.snyk.sdk.SnykConfig;
-import io.snyk.sdk.api.v1.SnykClient;
-import io.snyk.sdk.model.TestResult;
+import io.snyk.sdk.api.SnykClient;
 import org.artifactory.fs.FileLayoutInfo;
 import org.artifactory.repo.RepoPath;
 import org.junit.jupiter.api.Assertions;
@@ -39,12 +39,8 @@ public class PythonScannerTest {
     when(fileLayoutInfo.getBaseRevision()).thenReturn("1.25.7");
 
     TestResult result = scanner.scan(fileLayoutInfo, repoPath);
-    assertFalse(result.success);
-    assertEquals(1, result.dependencyCount);
-    assertEquals(5, result.issues.vulnerabilities.size());
-    assertEquals("pip", result.packageManager);
-    assertEquals(org, result.organisation.id);
-    assertEquals("https://snyk.io/vuln/pip%3Aurllib3%401.25.7", result.packageDetailsURL);
+    assertEquals(6, result.getVulnSummary().getTotalCount());
+    assertEquals("https://security.snyk.io/package/pip/urllib3/1.25.7", result.getDetailsUrl().toString());
   }
 
   @Test
@@ -146,8 +142,8 @@ public class PythonScannerTest {
 
   @Test
   void getModuleDetailsURL_shouldEncodeNameAndVersion() {
-    var details = new PythonScanner.ModuleURLDetails("ws3", "0.0.1.post3");
+    var details = new PythonScanner.ModuleURLDetails("changedetection.io", "0.39.10.post1");
     var result = PythonScanner.getModuleDetailsURL(details);
-    assertEquals("https://snyk.io/vuln/pip%3Aws3%400.0.1.post3", result);
+    assertEquals("https://security.snyk.io/package/pip/changedetection.io/0.39.10.post1", result);
   }
 }
